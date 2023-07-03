@@ -1528,10 +1528,11 @@ pub const DebugInfo = struct {
             while (it.next()) |cmd| switch (cmd.cmd()) {
                 .SEGMENT_64 => {
                     const segment_cmd = cmd.cast(macho.segment_command_64).?;
+                    if (!mem.eql(u8, "__TEXT", segment_cmd.segname)) continue;
+
                     const rebased_address = address - base_address;
                     const seg_start = segment_cmd.vmaddr;
                     const seg_end = seg_start + segment_cmd.vmsize;
-
                     if (rebased_address >= seg_start and rebased_address < seg_end) {
                         if (self.address_map.get(base_address)) |obj_di| {
                             return obj_di;
