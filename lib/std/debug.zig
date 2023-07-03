@@ -1530,7 +1530,7 @@ pub const DebugInfo = struct {
             while (it.next()) |cmd| switch (cmd.cmd()) {
                 .SEGMENT_64 => {
                     const segment_cmd = cmd.cast(macho.segment_command_64).?;
-                    if (!mem.eql(u8, "__TEXT", segment_cmd.setgName())) continue;
+                    if (!mem.eql(u8, "__TEXT", segment_cmd.segName())) continue;
 
                     const rebased_address = address - vmaddr_slide;
                     const seg_start = segment_cmd.vmaddr;
