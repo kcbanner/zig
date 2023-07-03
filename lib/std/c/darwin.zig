@@ -154,7 +154,7 @@ pub const ucontext_t = extern struct {
 pub const mcontext_t = extern struct {
     es: arch_bits.exception_state,
     ss: arch_bits.thread_state,
-    //fs: arch_bits.float_state,
+    fs: arch_bits.float_state,
 };
 
 extern "c" fn __error() *c_int;

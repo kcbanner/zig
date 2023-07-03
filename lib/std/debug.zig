@@ -445,11 +445,10 @@ pub inline fn getContext(context: *StackTraceContext) bool {
         return true;
     }
 
-    if (native_os == .macos) {
-        context.mcsize = @sizeOf(std.c.mcontext_t);
-    }
+    const result = have_getcontext and os.system.getcontext(context) == 0;
+    if (native_os == .macos) assert(context.mcsize == @sizeOf(std.c.mcontext_t));
 
-    return have_getcontext and os.system.getcontext(context) == 0;
+    return result;
 }
 
 pub const UnwindError = if (have_ucontext)
