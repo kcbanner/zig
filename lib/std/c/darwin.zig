@@ -148,6 +148,7 @@ pub const ucontext_t = extern struct {
     link: ?*ucontext_t,
     mcsize: u64,
     mcontext: *mcontext_t,
+    __mcontext_data: mcontext_t,
 };
 
 pub const mcontext_t = extern struct {

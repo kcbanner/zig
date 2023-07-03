@@ -553,6 +553,7 @@ pub const StackIterator = struct {
         if (native_os == .freestanding) return true;
 
         const aligned_address = address & ~@as(usize, @intCast((mem.page_size - 1)));
+        if (aligned_address == 0) return false;
         const aligned_memory = @as([*]align(mem.page_size) u8, @ptrFromInt(aligned_address))[0..mem.page_size];
 
         if (native_os != .windows) {
