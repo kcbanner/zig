@@ -1514,11 +1514,10 @@ pub const DebugInfo = struct {
 
         var i: u32 = 0;
         while (i < image_count) : (i += 1) {
-            const base_address = std.c._dyld_get_image_vmaddr_slide(i);
-
-            if (address < base_address) continue;
-
             const header = std.c._dyld_get_image_header(i) orelse continue;
+            const slide = std.c._dyld_get_image_vmaddr_slide(i);
+            const base_address = @intFromPtr(header) + slide;
+            if (address < base_address) continue;
 
             var it = macho.LoadCommandIterator{
                 .ncmds = header.ncmds,
