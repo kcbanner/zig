@@ -425,6 +425,7 @@ pub fn writeStackTrace(
     }
 }
 
+
 pub const have_getcontext = @hasDecl(os.system, "getcontext") and
     (builtin.os.tag != .linux or switch (builtin.cpu.arch) {
     .x86, .x86_64 => true,
@@ -442,6 +443,10 @@ pub inline fn getContext(context: *StackTraceContext) bool {
         context.* = std.mem.zeroes(windows.CONTEXT);
         windows.ntdll.RtlCaptureContext(context);
         return true;
+    }
+
+    if (native_os == .macos) {
+        context.mcsize = @sizeOf(std.c.mcontext_t);
     }
 
     return have_getcontext and os.system.getcontext(context) == 0;
