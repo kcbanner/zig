@@ -1517,6 +1517,7 @@ pub const DebugInfo = struct {
             const header = std.c._dyld_get_image_header(i) orelse continue;
             const base_address = @intFromPtr(header);
             if (address < base_address) continue;
+            const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(i);
 
             var it = macho.LoadCommandIterator{
                 .ncmds = header.ncmds,
@@ -1525,12 +1526,13 @@ pub const DebugInfo = struct {
                     @ptrFromInt(@intFromPtr(header) + @sizeOf(macho.mach_header_64)),
                 )[0..header.sizeofcmds]),
             };
+
             while (it.next()) |cmd| switch (cmd.cmd()) {
                 .SEGMENT_64 => {
                     const segment_cmd = cmd.cast(macho.segment_command_64).?;
-                    if (!mem.eql(u8, "__TEXT", segment_cmd.segname)) continue;
+                    if (!mem.eql(u8, "__TEXT", segment_cmd.setgName())) continue;
 
-                    const rebased_address = address - base_address;
+                    const rebased_address = address - vmaddr_slide;
                     const seg_start = segment_cmd.vmaddr;
                     const seg_end = seg_start + segment_cmd.vmsize;
                     if (rebased_address >= seg_start and rebased_address < seg_end) {
