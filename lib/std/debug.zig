@@ -1309,6 +1309,7 @@ fn readMachODebugInfo(allocator: mem.Allocator, macho_file: File) !ModuleDebugIn
 
     return ModuleDebugInfo{
         .base_address = undefined,
+        .vmaddr_slide = undefined,
         .mapped_memory = mapped_mem,
         .ofiles = ModuleDebugInfo.OFileTable.init(allocator),
         .symbols = symbols,
@@ -1532,10 +1533,10 @@ pub const DebugInfo = struct {
                     const segment_cmd = cmd.cast(macho.segment_command_64).?;
                     if (!mem.eql(u8, "__TEXT", segment_cmd.segName())) continue;
 
-                    const rebased_address = address - vmaddr_slide;
+                    const original_address = address - vmaddr_slide;
                     const seg_start = segment_cmd.vmaddr;
                     const seg_end = seg_start + segment_cmd.vmsize;
-                    if (rebased_address >= seg_start and rebased_address < seg_end) {
+                    if (original_address >= seg_start and original_address < seg_end) {
                         if (self.address_map.get(base_address)) |obj_di| {
                             return obj_di;
                         }
@@ -1552,6 +1553,7 @@ pub const DebugInfo = struct {
                         };
                         obj_di.* = try readMachODebugInfo(self.allocator, macho_file);
                         obj_di.base_address = base_address;
+                        obj_di.vmaddr_slide = vmaddr_slide;
 
                         try self.address_map.putNoClobber(base_address, obj_di);
 
@@ -1809,6 +1811,7 @@ pub const DebugInfo = struct {
 pub const ModuleDebugInfo = switch (native_os) {
     .macos, .ios, .watchos, .tvos => struct {
         base_address: usize,
+        vmaddr_slide: usize,
         mapped_memory: []align(mem.page_size) const u8,
         symbols: []const MachoSymbol,
         strings: [:0]const u8,
@@ -1973,7 +1976,7 @@ pub const ModuleDebugInfo = switch (native_os) {
         } {
             nosuspend {
                 // Translate the VA into an address into this object
-                const relocated_address = address - self.base_address;
+                const relocated_address = address - self.vmaddr_slide;
 
                 // Find the .o file where this symbol is defined
                 const symbol = machoSearchSymbols(self.symbols, relocated_address) orelse return .{
