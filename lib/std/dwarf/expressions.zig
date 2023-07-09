@@ -1178,6 +1178,7 @@ test "DWARF expressions" {
             .is_macho = builtin.os.tag == .macos,
         };
         var thread_context: std.debug.ThreadContext = undefined;
+        std.debug.relocateContext(&thread_context);
         const context = ExpressionContext{
             .thread_context = &thread_context,
             .reg_context = reg_context,
