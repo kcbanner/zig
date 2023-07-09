@@ -54,6 +54,7 @@ pub const AbiError = error{
     InvalidRegister,
     UnimplementedArch,
     UnimplementedOs,
+    RegisterContextRequired,
     ThreadContextNotSupported,
 };
 
