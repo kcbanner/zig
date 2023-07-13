@@ -9,6 +9,20 @@ noinline fn frame3(expected: *[4]usize, unwound: *[4]usize) void {
     var context: debug.ThreadContext = undefined;
     testing.expect(debug.getContext(&context)) catch @panic("failed to getContext");
 
+    if (builtin.target.os.tag == .macos and builtin.target.cpu.arch == .aarch64) {
+        debug.print("Context (return addr {x}):\n", .{expected[0]});
+        for (context.__mcontext_data.ss.regs, 0) |reg, i| {
+            debug.print("  reg{d}: {x}\n", .{ reg, i });
+        }
+
+        debug.print("  fp: {x}\n", .{context.__mcontext_data.ss.fp});
+        debug.print("  lr: {x}\n", .{context.__mcontext_data.ss.lr});
+        debug.print("  sp: {x}\n", .{context.__mcontext_data.ss.sp});
+        debug.print("  pc: {x}\n", .{context.__mcontext_data.ss.pc});
+        debug.print("  cpsr: {x}\n", .{context.__mcontext_data.ss.cpsr});
+        debug.print("  full context: {any} regs: {any}\n", .{context});
+    }
+
     var debug_info = debug.getSelfDebugInfo() catch @panic("failed to openSelfDebugInfo");
     var it = debug.StackIterator.initWithContext(expected[0], debug_info, &context) catch @panic("failed to initWithContext");
     defer it.deinit();
