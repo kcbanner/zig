@@ -5292,6 +5292,7 @@ pub fn generateBuiltinZigSource(comp: *Compilation, allocator: Allocator) Alloca
         \\pub const position_independent_executable = {};
         \\pub const strip_debug_info = {};
         \\pub const code_model = std.builtin.CodeModel.{};
+        \\pub const omit_frame_pointer = {};
         \\
     , .{
         std.zig.fmtId(@tagName(target.ofmt)),
@@ -5305,6 +5306,7 @@ pub fn generateBuiltinZigSource(comp: *Compilation, allocator: Allocator) Alloca
         comp.bin_file.options.pie,
         comp.bin_file.options.strip,
         std.zig.fmtId(@tagName(comp.bin_file.options.machine_code_model)),
+        comp.bin_file.options.omit_frame_pointer,
     });
 
     if (target.os.tag == .wasi) {
