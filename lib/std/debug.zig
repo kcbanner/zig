@@ -581,7 +581,11 @@ pub const StackIterator = struct {
 
         if (self.first_address) |first_address| {
             while (address != first_address) {
-                address = self.next_internal() orelse return null;
+                const next_address = self.next_internal() orelse return null;
+                if (next_address == address) {
+                    print("infinite loop detected\n", .{});
+                }
+                address = next_address;
             }
             self.first_address = null;
         }
@@ -642,7 +646,9 @@ pub const StackIterator = struct {
                 // __unwind_info is a requirement for unwinding on Darwin. It may fall back to DWARF, but unwinding
                 // via DWARF before attempting to use the compact unwind info will produce incorrect results.
                 if (module.unwind_info) |unwind_info| {
+                    const prev_pc = unwind_state.dwarf_context.pc;
                     if (macho.unwindFrame(&unwind_state.dwarf_context, unwind_info, module.eh_frame, module.base_address)) |return_address| {
+                        if (unwind_state.dwarf_context.pc == prev_pc) return error.InfiniteLoopDetected;
                         return return_address;
                     } else |err| {
                         if (err != error.RequiresDWARFUnwind) return err;
@@ -677,6 +683,8 @@ pub const StackIterator = struct {
             }
         }
 
+
+
         const fp = if (comptime native_arch.isSPARC())
             // On SPARC the offset is positive. (!)
             math.add(usize, self.fp, fp_offset) catch return null
@@ -703,6 +711,8 @@ pub const StackIterator = struct {
 
         self.fp = new_fp;
 
+        print("fp_it: addr 0x{x} new fp 0x{x} prev fp 0x{x}\n", .{new_pc, new_fp, fp});
+
         return new_pc;
     }
 };
@@ -719,9 +729,18 @@ pub fn writeCurrentStackTrace(
         return writeStackTraceWindows(out_stream, debug_info, tty_config, &context, start_addr);
     }
 
+    // Debug
+    if (builtin.target.isDarwin()) {
+        var fp_it = StackIterator.init(null, null);
+        defer fp_it.deinit();
+        while (fp_it.next()) |return_address| {
+            try printSourceAtAddress(debug_info, out_stream, return_address, tty_config);
+        }
+    }
+
     var it = (if (has_context) blk: {
         break :blk StackIterator.initWithContext(start_addr, debug_info, &context) catch null;
-    } else null) orelse StackIterator.init(start_addr, null);
+        } else null) orelse StackIterator.init(start_addr, null);
     defer it.deinit();
 
     while (it.next()) |return_address| {

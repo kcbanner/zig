@@ -1659,6 +1659,8 @@ pub const DwarfInfo = struct {
         if (!comptime abi.isSupportedArch(builtin.target.cpu.arch)) return error.UnsupportedCpuArchitecture;
         if (context.pc == 0) return 0;
 
+        std.debug.print("dwarf.unwindFrame: context.pc 0x{x} explicit_fde_offset: 0x{?x}\n", .{context.pc, explicit_fde_offset});
+
         // TODO: Handle unwinding from a signal frame (ie. use_prev_instr in libunwind)
 
         // Find the FDE and CIE
@@ -1702,8 +1704,6 @@ pub const DwarfInfo = struct {
                 builtin.cpu.arch.endian(),
             );
         } else if (di.eh_frame_hdr) |header| {
-            std.debug.print("EH_FRAME_HDR\n", .{});
-
             const eh_frame_len = if (di.section(.eh_frame)) |eh_frame| eh_frame.len else null;
             try header.findEntry(
                 context.isValidMemory,
@@ -1725,7 +1725,15 @@ pub const DwarfInfo = struct {
                 }
             }.compareFn);
 
-            fde = if (index) |i| di.fde_list.items[i] else return error.MissingFDE;
+            fde = if (index) |i| di.fde_list.items[i] else {
+                // Temporary to debug CI issue
+                debug.print("Failed to find FDE for PC {x} Module base: {x}\nAll FDEs:\n", .{ context.pc, module_base_address });
+                for (di.fde_list.items) |f| {
+                    debug.print("  {x} + {x}\n", .{ f.pc_begin, f.pc_range });
+                }
+
+                return error.MissingFDE;
+            };
             cie = di.cie_map.get(fde.cie_length_offset) orelse return error.MissingCIE;
         }
 
@@ -1839,6 +1847,8 @@ pub const DwarfInfo = struct {
                 cie.return_address_register,
                 context.reg_context,
             )));
+
+            std.debug.print("     new context.pc: 0x{x}\n", .{context.pc});
         } else {
             context.pc = 0;
         }
@@ -1846,6 +1856,18 @@ pub const DwarfInfo = struct {
         std.debug.print("     new context.pc: 0x{x}\n", .{context.pc});
 
         (try abi.regValueNative(usize, context.thread_context, abi.spRegNum(context.reg_context), context.reg_context)).* = context.cfa.?;
+
+        if (comptime builtin.target.isDarwin()) {
+            std.debug.print("  state after:\n", .{});
+            std.debug.print("    cfa {?x}:\n", .{context.cfa});
+            for (context.thread_context.mcontext.ss.regs, 0..) |reg, i| {
+                std.debug.print("    {}:0x{x}\n", .{i, reg});
+            }
+            std.debug.print("    fp:0x{x}\n", .{context.thread_context.mcontext.ss.fp});
+            std.debug.print("    lr:0x{x}\n", .{context.thread_context.mcontext.ss.lr});
+            std.debug.print("    sp:0x{x}\n", .{context.thread_context.mcontext.ss.sp});
+            std.debug.print("    pc:0x{x}\n", .{context.thread_context.mcontext.ss.pc});
+        }
 
         // The call instruction will have pushed the address of the instruction that follows the call as the return address
         // However, this return address may be past the end of the function if the caller was `noreturn`. By subtracting one,

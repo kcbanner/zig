@@ -10,10 +10,37 @@ noinline fn frame3(expected: *[4]usize, unwound: *[4]usize) void {
     testing.expect(debug.getContext(&context)) catch @panic("failed to getContext");
 
     var debug_info = debug.getSelfDebugInfo() catch @panic("failed to openSelfDebugInfo");
-    var it = debug.StackIterator.initWithContext(expected[0], debug_info, &context) catch @panic("failed to initWithContext");
+    var it = debug.StackIterator.initWithContext(null, debug_info, &context) catch @panic("failed to initWithContext");
     defer it.deinit();
 
-    for (unwound) |*addr| {
+    if (comptime builtin.target.isDarwin() and builtin.cpu.arch == .aarch64) {
+        const module = debug_info.getModuleForAddress(it.unwind_state.?.dwarf_context.pc) catch |err| {
+            debug.print("no module found {}\n", .{err});
+            @panic("no module");
+        };
+
+        debug.print("module has eh_frame: {} unwind_info: {} pc {}\n", .{
+            module.eh_frame != null,
+            module.unwind_info != null,
+            it.unwind_state.?.dwarf_context.pc,
+        });
+        if (module.eh_frame) |e| {
+            debug.print("eh_frame: {x} {x}\n", .{ @as(usize, @intFromPtr(e.ptr)), e.len });
+        } else {
+            debug.print("eh_frame: none\n", .{});
+        }
+    }
+
+    const tty_config = std.io.tty.detectConfig(std.io.getStdErr());
+    for (unwound, 0..) |*addr, i| {
+        if (it.getLastError()) |unwind_error| {
+            std.debug.printUnwindError(debug_info, std.io.getStdErr().writer(), unwind_error.address, unwind_error.err, tty_config) catch @panic("error printing");
+            @panic("error during unwinding");
+        }
+
+
+        if (comptime builtin.target.isDarwin()) std.debug.print("i {} dwarf_context: {any}\nmcontext: {any}\n", .{ i, it.unwind_state.?.dwarf_context, it.unwind_state.?.dwarf_context.thread_context.mcontext.* });
+
         if (it.next()) |return_address| addr.* = return_address;
     }
 }

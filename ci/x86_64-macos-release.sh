@@ -47,29 +47,5 @@ cmake .. \
 
 make $JOBS install
 
-stage3/bin/zig build test docs \
-  --zig-lib-dir "$(pwd)/../lib" \
-  -Denable-macos-sdk \
-  -Dstatic-llvm \
-  -Dskip-non-native \
-  --search-prefix "$PREFIX"
-
-# Produce the experimental std lib documentation.
-stage3/bin/zig test ../lib/std/std.zig -femit-docs -fno-emit-bin --zig-lib-dir ../lib
-
-# Ensure that stage3 and stage4 are byte-for-byte identical.
-stage3/bin/zig build \
-  --prefix stage4 \
-  -Denable-llvm \
-  -Dno-lib \
-  -Doptimize=ReleaseFast \
-  -Dstrip \
-  -Dtarget=$TARGET \
-  -Duse-zig-libcxx \
-  -Dversion-string="$(stage3/bin/zig version)"
-
-# Disabled due to https://github.com/ziglang/zig/issues/15197
-## diff returns an error code if the files differ.
-#echo "If the following command fails, it means nondeterminism has been"
-#echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
-#diff stage3/bin/zig stage4/bin/zig
+cd test/standalone/stack_iterator
+stage3-debug/bin/zig build test --zig-lib-dir "$(pwd)/../lib"

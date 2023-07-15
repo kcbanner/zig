@@ -2175,6 +2175,8 @@ pub fn unwindFrame(context: *dwarf.UnwindContext, unwind_info: []const u8, eh_fr
         break :blk &indices[left];
     };
 
+    std.debug.print("unwindFrame: context.pc 0x{x} mapped_pc 0x{x}\n", .{context.pc, mapped_pc});
+
     const common_encodings = mem.bytesAsSlice(
         compact_unwind_encoding_t,
         unwind_info[header.commonEncodingsArraySectionOffset..][0 .. header.commonEncodingsArrayCount * @sizeOf(compact_unwind_encoding_t)],
@@ -2403,6 +2405,7 @@ pub fn unwindFrame(context: *dwarf.UnwindContext, unwind_info: []const u8, eh_fr
         .aarch64 => switch (encoding.mode.arm64) {
             .OLD => return error.UnimplementedUnwindEncoding,
             .FRAMELESS => blk: {
+                std.debug.print("  frameless\n", .{});
                 const sp = (try abi.regValueNative(usize, context.thread_context, abi.spRegNum(reg_context), reg_context)).*;
                 const new_sp = sp + encoding.value.arm64.frameless.stack_size * 16;
                 const new_ip = (try abi.regValueNative(usize, context.thread_context, 30, reg_context)).*;
@@ -2411,9 +2414,11 @@ pub fn unwindFrame(context: *dwarf.UnwindContext, unwind_info: []const u8, eh_fr
                 break :blk new_ip;
             },
             .DWARF => {
+                std.debug.print("  dwarf 0x{x}\n", .{encoding.value.arm64.dwarf});
                 return unwindFrameDwarf(context, eh_frame orelse return error.MissingEhFrame, @intCast(encoding.value.arm64.dwarf));
             },
             .FRAME => blk: {
+                std.debug.print("  frame\n", .{});
                 const fp = (try abi.regValueNative(usize, context.thread_context, abi.fpRegNum(reg_context), reg_context)).*;
                 const new_sp = fp + 16;
                 const ip_ptr = fp + @sizeOf(usize);

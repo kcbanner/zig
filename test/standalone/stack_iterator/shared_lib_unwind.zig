@@ -9,7 +9,7 @@ noinline fn frame4(expected: *[5]usize, unwound: *[5]usize) void {
     testing.expect(debug.getContext(&context)) catch @panic("failed to getContext");
 
     var debug_info = debug.getSelfDebugInfo() catch @panic("failed to openSelfDebugInfo");
-    var it = debug.StackIterator.initWithContext(expected[0], debug_info, &context) catch @panic("failed to initWithContext");
+    var it = debug.StackIterator.initWithContext(null, debug_info, &context) catch @panic("failed to initWithContext");
     defer it.deinit();
 
     for (unwound) |*addr| {
