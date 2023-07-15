@@ -1690,7 +1690,15 @@ pub const DwarfInfo = struct {
                 }
             }.compareFn);
 
-            fde = if (index) |i| di.fde_list.items[i] else return error.MissingFDE;
+            fde = if (index) |i| di.fde_list.items[i] else {
+                // Temporary to debug CI issue
+                debug.print("Failed to find FDE for PC {x} Module base: {x}\nAll FDEs:\n", .{ context.pc, module_base_address });
+                for (di.fde_list.items) |f| {
+                    debug.print("  {x} + {x}\n", .{ f.pc_begin, f.pc_range });
+                }
+
+                return error.MissingFDE;
+            };
             cie = di.cie_map.get(fde.cie_length_offset) orelse return error.MissingCIE;
         }
 

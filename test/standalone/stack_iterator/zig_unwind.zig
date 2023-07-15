@@ -13,6 +13,33 @@ noinline fn frame3(expected: *[4]usize, unwound: *[4]usize) void {
     var it = debug.StackIterator.initWithContext(expected[0], debug_info, &context) catch @panic("failed to initWithContext");
     defer it.deinit();
 
+    if (builtin.target.isDarwin() and builtin.cpu.arch == .aarch64) {
+        const module = debug_info.getModuleForAddress(it.unwind_state.?.dwarf_context.pc) catch |err| {
+            debug.print("no module found {}\n", .{err});
+            @panic("no module");
+        };
+
+        debug.print("module has eh_frame: {} unwind_info: {} pc {}\n", .{
+            module.eh_frame != null,
+            module.unwind_info != null,
+            it.unwind_state.?.dwarf_context.pc,
+        });
+        if (module.eh_frame) |e| {
+            debug.print("eh_frame: {x} {x}\n", .{ @as(usize, @intFromPtr(e.ptr)), e.len });
+        } else {
+            debug.print("eh_frame: none\n", .{});
+        }
+
+        const di = module.getDwarfInfoForAddress(std.heap.c_allocator, it.unwind_state.?.dwarf_context.pc) catch @panic("failed to get di");
+        if (di) |d| {
+            @constCast(d).scanAllUnwindInfo(std.heap.c_allocator, module.base_address) catch |err| {
+                debug.print("error scanning unwind info {}\n", .{err});
+            };
+        } else {
+            debug.print("failed to get di\n", .{});
+        }
+    }
+
     for (unwound) |*addr| {
         if (it.next()) |return_address| addr.* = return_address;
     }
