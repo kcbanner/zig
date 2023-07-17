@@ -686,7 +686,8 @@ pub const DwarfInfo = struct {
     pub const null_section_array = [_]?Section{null} ** num_sections;
 
     endian: std.builtin.Endian,
-    sections: SectionArray,
+    sections: SectionArray = null_section_array,
+    is_macho: bool,
 
     // Filled later by the initializer
     abbrev_table_list: std.ArrayListUnmanaged(AbbrevTableHeader) = .{},
@@ -698,8 +699,6 @@ pub const DwarfInfo = struct {
     cie_map: std.AutoArrayHashMapUnmanaged(u64, CommonInformationEntry) = .{},
     // Sorted by start_pc
     fde_list: std.ArrayListUnmanaged(FrameDescriptionEntry) = .{},
-
-    is_macho: bool,
 
     pub fn section(di: DwarfInfo, dwarf_section: DwarfSection) ?[]const u8 {
         return if (di.sections[@intFromEnum(dwarf_section)]) |s| s.data else null;
@@ -1672,6 +1671,8 @@ pub const DwarfInfo = struct {
             if (fde_offset >= frame_section.len) return error.MissingFDE;
 
             var stream = io.fixedBufferStream(frame_section);
+            try stream.seekTo(fde_offset);
+
             const fde_entry_header = try EntryHeader.read(&stream, dwarf_section, di.endian);
             if (fde_entry_header.type != .fde) return error.MissingFDE;
 
