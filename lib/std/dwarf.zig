@@ -1791,47 +1791,49 @@ pub const DwarfInfo = struct {
 
         const RegisterUpdate = struct {
             // Backed by thread_context
-            old_value: []u8,
+            dest: []u8,
             // Backed by arena
-            new_value: []const u8,
+            src: []const u8,
             prev: ?*@This(),
         };
 
         var update_tail: ?*RegisterUpdate = null;
-        var has_next_ip = true;
+        var has_return_address= true;
         for (context.vm.rowColumns(row)) |column| {
             if (column.register) |register| {
                 if (register == cie.return_address_register) {
-                    has_next_ip = column.rule != .undefined;
+                    has_return_address = column.rule != .undefined;
                 }
                 std.debug.print("      updated {}\n", .{register});
 
-                const old_value = try abi.regBytes(context.thread_context, register, context.reg_context);
-                const new_value = try update_allocator.alloc(u8, old_value.len);
+                const dest = try abi.regBytes(context.thread_context, register, context.reg_context);
+                const src = try update_allocator.alloc(u8, dest.len);
 
                 const prev = update_tail;
                 update_tail = try update_allocator.create(RegisterUpdate);
                 update_tail.?.* = .{
-                    .old_value = old_value,
-                    .new_value = new_value,
+                    .dest = dest,
+                    .src = src,
                     .prev = prev,
                 };
 
                 try column.resolveValue(
                     context,
                     expression_context,
-                    new_value,
+                    src,
                 );
             }
         }
 
+        // On all implemented architectures, the CFA is defined as being the previous frame's SP
         (try abi.regValueNative(usize, context.thread_context, abi.spRegNum(context.reg_context), context.reg_context)).* = context.cfa.?;
+
         while (update_tail) |tail| {
-            @memcpy(tail.old_value, tail.new_value);
+            @memcpy(tail.dest, tail.src);
             update_tail = tail.prev;
         }
 
-        if (has_next_ip) {
+        if (has_return_address) {
             context.pc = abi.stripInstructionPtrAuthCode(mem.readIntSliceNative(usize, try abi.regBytes(
                 context.thread_context,
                 cie.return_address_register,
