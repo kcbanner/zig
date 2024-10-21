@@ -4,6 +4,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Test it");
     b.default_step = test_step;
 
+    if (b.graph.host.result.os.tag == .windows and b.graph.host.result.cpu.arch == .aarch64) {
+        // https://github.com/ziglang/zig/issues/16959
+        return;
+    }
+
     const optimize: std.builtin.OptimizeMode = .Debug;
 
     const obj = b.addObject(.{
