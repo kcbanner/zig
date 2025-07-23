@@ -1226,12 +1226,13 @@ const MachODumper = struct {
         fn parseRebaseInfo(ctx: ObjectContext, data: []const u8, rebases: *std.ArrayList(u64)) !void {
             var stream = std.io.fixedBufferStream(data);
             var creader = std.io.countingReader(stream.reader());
-            const reader = creader.reader();
+            var adapter = creader.reader().adaptToNewApi();
+            const reader = &adapter.new_interface;
 
             var seg_id: ?u8 = null;
             var offset: u64 = 0;
             while (true) {
-                const byte = reader.readByte() catch break;
+                const byte = reader.takeByte() catch break;
                 const opc = byte & macho.REBASE_OPCODE_MASK;
                 const imm = byte & macho.REBASE_IMMEDIATE_MASK;
                 switch (opc) {
@@ -1338,7 +1339,8 @@ const MachODumper = struct {
         fn parseBindInfo(ctx: ObjectContext, data: []const u8, bindings: *std.ArrayList(Binding)) !void {
             var stream = std.io.fixedBufferStream(data);
             var creader = std.io.countingReader(stream.reader());
-            const reader = creader.reader();
+            var adapter = creader.reader().adaptToNewApi();
+            const reader = &adapter.new_interface;
 
             var seg_id: ?u8 = null;
             var tag: Binding.Tag = .self;
@@ -1346,11 +1348,11 @@ const MachODumper = struct {
             var offset: u64 = 0;
             var addend: i64 = 0;
 
-            var name_buf = std.ArrayList(u8).init(ctx.gpa);
+            var name_buf: std.io.Writer.Allocating = .init(ctx.gpa);
             defer name_buf.deinit();
 
             while (true) {
-                const byte = reader.readByte() catch break;
+                const byte = reader.takeByte() catch break;
                 const opc = byte & macho.BIND_OPCODE_MASK;
                 const imm = byte & macho.BIND_IMMEDIATE_MASK;
                 switch (opc) {
@@ -1375,8 +1377,7 @@ const MachODumper = struct {
                     },
                     macho.BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM => {
                         name_buf.clearRetainingCapacity();
-                        try reader.readUntilDelimiterArrayList(&name_buf, 0, std.math.maxInt(u32));
-                        try name_buf.append(0);
+                        _ = try reader.streamDelimiter(&name_buf.writer, 0);
                     },
                     macho.BIND_OPCODE_SET_ADDEND_SLEB => {
                         addend = try std.leb.readIleb128(i64, reader);
@@ -1418,7 +1419,7 @@ const MachODumper = struct {
                                 .addend = addend,
                                 .tag = tag,
                                 .ordinal = ordinal,
-                                .name = try ctx.gpa.dupe(u8, name_buf.items),
+                                .name = try ctx.gpa.dupeZ(u8, name_buf.getWritten()),
                             });
                             offset += skip + @sizeOf(u64) + add_addr;
                         }
@@ -1476,8 +1477,8 @@ const MachODumper = struct {
             fn readUleb128(it: *TrieIterator) !u64 {
                 var stream = it.getStream();
                 var creader = std.io.countingReader(stream.reader());
-                const reader = creader.reader();
-                const value = try std.leb.readUleb128(u64, reader);
+                var adapter = creader.reader().adaptToNewApi();
+                const value = try std.leb.readUleb128(u64, &adapter.new_interface);
                 it.pos += creader.bytes_read;
                 return value;
             }
@@ -2387,8 +2388,7 @@ const WasmDumper = struct {
 
     fn parseAndDump(step: *Step, check: Check, bytes: []const u8) ![]const u8 {
         const gpa = step.owner.allocator;
-        var fbs = std.io.fixedBufferStream(bytes);
-        const reader = fbs.reader();
+        var reader: std.io.Reader = .fixed(bytes);
 
         const buf = try reader.readBytesNoEof(8);
         if (!mem.eql(u8, buf[0..4], &std.wasm.magic)) {
@@ -2400,7 +2400,7 @@ const WasmDumper = struct {
 
         var output = std.ArrayList(u8).init(gpa);
         defer output.deinit();
-        parseAndDumpInner(step, check, bytes, &fbs, &output) catch |err| switch (err) {
+        parseAndDumpInner(step, check, bytes, &reader, &output) catch |err| switch (err) {
             error.EndOfStream => try output.appendSlice("\n<UnexpectedEndOfStream>"),
             else => |e| return e,
         };
@@ -2410,26 +2410,23 @@ const WasmDumper = struct {
     fn parseAndDumpInner(
         step: *Step,
         check: Check,
-        bytes: []const u8,
-        fbs: *std.io.FixedBufferStream([]const u8),
-        output: *std.ArrayList(u8),
+        reader: *std.io.Reader,
+        writer: *std.io.Writer,
     ) !void {
-        const reader = fbs.reader();
-        const writer = output.writer();
-
         switch (check.kind) {
             .headers => {
-                while (reader.readByte()) |current_byte| {
+                while (reader.takeByte()) |current_byte| {
                     const section = std.enums.fromInt(std.wasm.Section, current_byte) orelse {
                         return step.fail("Found invalid section id '{d}'", .{current_byte});
                     };
 
                     const section_length = try std.leb.readUleb128(u32, reader);
-                    try parseAndDumpSection(step, section, bytes[fbs.pos..][0..section_length], writer);
-                    fbs.pos += section_length;
-                } else |_| {} // reached end of stream
+                    try parseAndDumpSection(step, section, try reader.take(section_length), writer);
+                } else |err| switch (err) {
+                    error.EndOfStream => {},
+                    else => return err,
+                }
             },
-
             else => return step.fail("invalid check kind for Wasm file format: {s}", .{@tagName(check.kind)}),
         }
     }
@@ -2438,10 +2435,9 @@ const WasmDumper = struct {
         step: *Step,
         section: std.wasm.Section,
         data: []const u8,
-        writer: anytype,
+        writer: *std.io.Writer,
     ) !void {
-        var fbs = std.io.fixedBufferStream(data);
-        const reader = fbs.reader();
+        var reader: std.io.Reader = .fixed(data);
 
         try writer.print(
             \\Section {s}
@@ -2462,12 +2458,11 @@ const WasmDumper = struct {
             => {
                 const entries = try std.leb.readUleb128(u32, reader);
                 try writer.print("\nentries {d}\n", .{entries});
-                try parseSection(step, section, data[fbs.pos..], entries, writer);
+                try parseSection(step, section, reader.buffered(), entries, writer);
             },
             .custom => {
                 const name_length = try std.leb.readUleb128(u32, reader);
-                const name = data[fbs.pos..][0..name_length];
-                fbs.pos += name_length;
+                const name = reader.take(name_length);
                 try writer.print("\nname {s}\n", .{name});
 
                 if (mem.eql(u8, name, "name")) {
@@ -2491,7 +2486,13 @@ const WasmDumper = struct {
         }
     }
 
-    fn parseSection(step: *Step, section: std.wasm.Section, data: []const u8, entries: u32, writer: anytype) !void {
+    fn parseSection(
+        step: *Step,
+        section: std.wasm.Section,
+        data: []const u8,
+        entries: u32,
+        writer: *std.io.Writer,
+    ) !void {
         var fbs = std.io.fixedBufferStream(data);
         const reader = fbs.reader();
 
