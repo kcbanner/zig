@@ -2668,18 +2668,16 @@ fn writeDyldInfo(self: *MachO) !void {
     defer gpa.free(buffer);
     @memset(buffer, 0);
 
-    var stream = std.io.fixedBufferStream(buffer);
-    const writer = stream.writer();
+    inline for (.{
+        .{ cmd.rebase_off, self.rebase_section.buffer.items },
+        .{ cmd.bind_off, self.bind_section.buffer.items },
+        .{ cmd.weak_bind_off, self.weak_bind_section.buffer.items },
+        .{ cmd.lazy_bind_off, self.lazy_bind_section.buffer.items },
+        .{ cmd.export_off, self.export_trie.buffer.items },
+    }) |p| {
+        @memcpy(buffer[p[0]..][0..p[1].len], p[1]);
+    }
 
-    try self.rebase_section.write(writer);
-    try stream.seekTo(cmd.bind_off - base_off);
-    try self.bind_section.write(writer);
-    try stream.seekTo(cmd.weak_bind_off - base_off);
-    try self.weak_bind_section.write(writer);
-    try stream.seekTo(cmd.lazy_bind_off - base_off);
-    try self.lazy_bind_section.write(writer);
-    try stream.seekTo(cmd.export_off - base_off);
-    try self.export_trie.write(writer);
     try self.pwriteAll(buffer, cmd.rebase_off);
 }
 

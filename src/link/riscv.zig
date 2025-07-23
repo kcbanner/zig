@@ -13,9 +13,8 @@ pub fn writeSetSubUleb(comptime op: enum { set, sub }, stream: *std.io.FixedBuff
     switch (op) {
         .set => try overwriteUleb(stream, @intCast(addend)),
         .sub => {
-            const position = try stream.getPos();
-            const value: u64 = try std.leb.readUleb128(u64, stream.reader());
-            try stream.seekTo(position);
+            var reader: std.io.Reader = .fixed(stream.buffer[stream.pos..]);
+            const value: u64 = try std.leb.readUleb128(u64, &reader);
             try overwriteUleb(stream, value -% @as(u64, @intCast(addend)));
         },
     }

@@ -1,7 +1,7 @@
-debug_info: []u8 = &[0]u8{},
-debug_abbrev: []u8 = &[0]u8{},
-debug_str: []u8 = &[0]u8{},
-debug_str_offsets: []u8 = &[0]u8{},
+debug_info: []u8 = &.{},
+debug_abbrev: []u8 = &.{},
+debug_str: []u8 = &.{},
+debug_str_offsets: []u8 = &.{},
 
 pub fn deinit(dwarf: *Dwarf, allocator: Allocator) void {
     allocator.free(dwarf.debug_info);
@@ -273,18 +273,16 @@ pub const InfoReader = struct {
     }
 
     pub fn readUleb128(p: *InfoReader, comptime Type: type) !Type {
-        var stream = std.io.fixedBufferStream(p.bytes()[p.pos..]);
-        var creader = std.io.countingReader(stream.reader());
-        const value: Type = try leb.readUleb128(Type, creader.reader());
-        p.pos += math.cast(usize, creader.bytes_read) orelse return error.Overflow;
+        var reader: std.io.Reader = .fixed(p.bytes()[p.pos..]);
+        const value: Type = try leb.readUleb128(Type, &reader);
+        p.pos += reader.seek;
         return value;
     }
 
     pub fn readIleb128(p: *InfoReader, comptime Type: type) !Type {
-        var stream = std.io.fixedBufferStream(p.bytes()[p.pos..]);
-        var creader = std.io.countingReader(stream.reader());
-        const value: Type = try leb.readIleb128(Type, creader.reader());
-        p.pos += math.cast(usize, creader.bytes_read) orelse return error.Overflow;
+        var reader: std.io.Reader = .fixed(p.bytes()[p.pos..]);
+        const value: Type = try leb.readIleb128(Type, &reader);
+        p.pos += reader.seek;
         return value;
     }
 
@@ -340,10 +338,9 @@ pub const AbbrevReader = struct {
     }
 
     pub fn readUleb128(p: *AbbrevReader, comptime Type: type) !Type {
-        var stream = std.io.fixedBufferStream(p.bytes()[p.pos..]);
-        var creader = std.io.countingReader(stream.reader());
-        const value: Type = try leb.readUleb128(Type, creader.reader());
-        p.pos += math.cast(usize, creader.bytes_read) orelse return error.Overflow;
+        var reader: std.io.Reader = .fixed(p.bytes()[p.pos..]);
+        const value: Type = try leb.readUleb128(Type, &reader);
+        p.pos += reader.seek;
         return value;
     }
 

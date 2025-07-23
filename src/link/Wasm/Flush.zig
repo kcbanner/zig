@@ -557,13 +557,13 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     // Index of the data section. Used to tell relocation table where the section lives.
     var data_section_index: ?u32 = null;
 
-    const binary_bytes = &f.binary_bytes;
-    assert(binary_bytes.items.len == 0);
+    var binary_writer: std.io.Writer.Allocating = .fromArrayList(gpa, &f.binary_bytes);
+    defer f.binary_bytes = binary_writer.toArrayList();
 
-    try binary_bytes.appendSlice(gpa, &std.wasm.magic ++ &std.wasm.version);
-    assert(binary_bytes.items.len == 8);
+    assert(binary_writer.getWritten().len == 0);
 
-    const binary_writer = binary_bytes.writer(gpa);
+    try binary_writer.writer.writeAll(&std.wasm.magic ++ &std.wasm.version);
+    assert(binary_writer.getWritten().len == 8);
 
     // Type section.
     for (f.function_imports.values()) |id| {
@@ -1280,25 +1280,29 @@ fn wantSegmentMerge(
 const section_header_reserve_size = 1 + 5 + 5;
 const section_header_size = 5 + 1;
 
-fn reserveVecSectionHeader(gpa: Allocator, bytes: *std.ArrayListUnmanaged(u8)) Allocator.Error!u32 {
-    try bytes.appendNTimes(gpa, 0, section_header_reserve_size);
-    return @intCast(bytes.items.len - section_header_reserve_size);
+fn reserveVecSectionHeader(writer: *std.io.Writer) !u32 {
+    const offset = writer.end;
+    try writer.splatByteAll(0, section_header_reserve_size);
+    return @intCast(offset);
 }
 
 fn replaceVecSectionHeader(
-    bytes: *std.ArrayListUnmanaged(u8),
+    bytes: *std.io.Writer.Allocating,
     offset: u32,
     section: std.wasm.Section,
     n_items: u32,
 ) void {
-    const size: u32 = @intCast(bytes.items.len - offset - section_header_reserve_size + uleb128size(n_items));
+    const size: u32 = @intCast(bytes.getWritten().len - offset - section_header_reserve_size + uleb128size(n_items));
     var buf: [section_header_reserve_size]u8 = undefined;
-    var fbw = std.io.fixedBufferStream(&buf);
-    const w = fbw.writer();
+    const w: std.io.Writer = .fixed(&buf);
     w.writeByte(@intFromEnum(section)) catch unreachable;
     leb.writeUleb128(w, size) catch unreachable;
     leb.writeUleb128(w, n_items) catch unreachable;
-    bytes.replaceRangeAssumeCapacity(offset, section_header_reserve_size, fbw.getWritten());
+
+    var list = bytes.toArrayList();
+    defer bytes.* = .fromArrayList(bytes.allocator, list);
+
+    list.replaceRangeAssumeCapacity(offset, section_header_reserve_size, w.buffered());
 }
 
 fn reserveCustomSectionHeader(gpa: Allocator, bytes: *std.ArrayListUnmanaged(u8)) Allocator.Error!u32 {
@@ -1310,14 +1314,17 @@ fn writeCustomSectionHeader(bytes: *std.ArrayListUnmanaged(u8), offset: u32) voi
     return replaceHeader(bytes, offset, 0); // 0 = 'custom' section
 }
 
-fn replaceHeader(bytes: *std.ArrayListUnmanaged(u8), offset: u32, tag: u8) void {
+fn replaceHeader(bytes: *std.io.Writer.Allocating, offset: u32, tag: u8) void {
     const size: u32 = @intCast(bytes.items.len - offset - section_header_size);
     var buf: [section_header_size]u8 = undefined;
-    var fbw = std.io.fixedBufferStream(&buf);
-    const w = fbw.writer();
+    const w: std.io.Writer = .fixed(&buf);
     w.writeByte(tag) catch unreachable;
     leb.writeUleb128(w, size) catch unreachable;
-    bytes.replaceRangeAssumeCapacity(offset, section_header_size, fbw.getWritten());
+
+    var list = bytes.toArrayList();
+    defer bytes.* = .fromArrayList(bytes.allocator, list);
+
+    list.replaceRangeAssumeCapacity(offset, section_header_size, w.buffered());
 }
 
 const max_size_encoding = 5;
@@ -1327,12 +1334,16 @@ fn reserveSize(gpa: Allocator, bytes: *std.ArrayListUnmanaged(u8)) Allocator.Err
     return @intCast(bytes.items.len - max_size_encoding);
 }
 
-fn replaceSize(bytes: *std.ArrayListUnmanaged(u8), offset: u32) void {
+fn replaceSize(bytes: *std.io.Writer.Allocating, offset: u32) void {
     const size: u32 = @intCast(bytes.items.len - offset - max_size_encoding);
     var buf: [max_size_encoding]u8 = undefined;
-    var fbw = std.io.fixedBufferStream(&buf);
-    leb.writeUleb128(fbw.writer(), size) catch unreachable;
-    bytes.replaceRangeAssumeCapacity(offset, max_size_encoding, fbw.getWritten());
+    const w: std.io.Writer = .fixed(&buf);
+    leb.writeUleb128(&w, size) catch unreachable;
+
+    var list = bytes.toArrayList();
+    defer bytes.* = .fromArrayList(bytes.allocator, list);
+
+    list.replaceRangeAssumeCapacity(offset, max_size_encoding, w.buffered());
 }
 
 fn emitLimits(

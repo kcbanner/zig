@@ -142,8 +142,8 @@ const DebugInfo = struct {
             &abbrev_code_buf,
             debug_info.section.off(dwarf) + unit_ptr.off + unit_ptr.header_len + entry_ptr.off,
         ) != abbrev_code_buf.len) return error.InputOutput;
-        var abbrev_code_fbs = std.io.fixedBufferStream(&abbrev_code_buf);
-        return @enumFromInt(std.leb.readUleb128(@typeInfo(AbbrevCode).@"enum".tag_type, abbrev_code_fbs.reader()) catch unreachable);
+        var abbrev_code_reader: std.io.Reader = .fixed(&abbrev_code_buf);
+        return @enumFromInt(std.leb.readUleb128(@typeInfo(AbbrevCode).@"enum".tag_type, &abbrev_code_reader) catch unreachable);
     }
 
     const trailer_bytes = 1 + 1;
@@ -1595,7 +1595,6 @@ pub const WipNav = struct {
 
     pub fn enterBlock(wip_nav: *WipNav, code_off: u64) UpdateError!void {
         const dwarf = wip_nav.dwarf;
-        const diw = wip_nav.debug_info.writer(dwarf.gpa);
         const block = try wip_nav.blocks.addOne(dwarf.gpa);
 
         block.abbrev_code = @intCast(wip_nav.debug_info.items.len);
@@ -1603,7 +1602,11 @@ pub const WipNav = struct {
         block.low_pc_off = code_off;
         try wip_nav.infoAddrSym(wip_nav.func_sym_index, code_off);
         block.high_pc = @intCast(wip_nav.debug_info.items.len);
-        try diw.writeInt(u32, 0, dwarf.endian);
+        {
+            var debug_info: std.io.Writer.Allocating = .fromArrayList(wip_nav.dwarf.gpa, &wip_nav.debug_info);
+            defer wip_nav.debug_info = debug_info.toArrayList();
+            try debug_info.writer.writeInt(u32, 0, dwarf.endian);
+        }
         wip_nav.any_children = false;
     }
 
@@ -1631,18 +1634,25 @@ pub const WipNav = struct {
     ) UpdateError!void {
         const dwarf = wip_nav.dwarf;
         const zcu = wip_nav.pt.zcu;
-        const diw = wip_nav.debug_info.writer(dwarf.gpa);
         const block = try wip_nav.blocks.addOne(dwarf.gpa);
 
         block.abbrev_code = @intCast(wip_nav.debug_info.items.len);
         try wip_nav.abbrevCode(.inlined_func);
         try wip_nav.refNav(zcu.funcInfo(func).owner_nav);
-        try uleb128(diw, zcu.navSrcLine(zcu.funcInfo(wip_nav.func).owner_nav) + line + 1);
-        try uleb128(diw, column + 1);
+        {
+            var debug_info: std.io.Writer.Allocating = .fromArrayList(dwarf.gpa, &wip_nav.debug_info);
+            defer wip_nav.debug_info = debug_info.toArrayList();
+            try uleb128(&debug_info.writer, zcu.navSrcLine(zcu.funcInfo(wip_nav.func).owner_nav) + line + 1);
+            try uleb128(&debug_info.writer, column + 1);
+        }
         block.low_pc_off = code_off;
         try wip_nav.infoAddrSym(wip_nav.func_sym_index, code_off);
         block.high_pc = @intCast(wip_nav.debug_info.items.len);
-        try diw.writeInt(u32, 0, dwarf.endian);
+        {
+            var debug_info: std.io.Writer.Allocating = .fromArrayList(dwarf.gpa, &wip_nav.debug_info);
+            defer wip_nav.debug_info = debug_info.toArrayList();
+            try debug_info.writer.writeInt(u32, 0, dwarf.endian);
+        }
         try wip_nav.setInlineFunc(func);
         wip_nav.any_children = false;
     }
@@ -1650,14 +1660,18 @@ pub const WipNav = struct {
     pub fn leaveInlineFunc(wip_nav: *WipNav, func: InternPool.Index, code_off: u64) UpdateError!void {
         const inlined_func_bytes = comptime uleb128Bytes(@intFromEnum(AbbrevCode.inlined_func));
         const block = wip_nav.blocks.pop().?;
-        if (wip_nav.any_children)
-            try uleb128(wip_nav.debug_info.writer(wip_nav.dwarf.gpa), @intFromEnum(AbbrevCode.null))
-        else
+
+        if (wip_nav.any_children) {
+            var debug_info: std.io.Writer.Allocating = .fromArrayList(wip_nav.dwarf.gpa, &wip_nav.debug_info);
+            defer wip_nav.debug_info = debug_info.toArrayList();
+            try uleb128(&debug_info.writer, @intFromEnum(AbbrevCode.null));
+        } else {
             std.leb.writeUnsignedFixed(
                 inlined_func_bytes,
                 wip_nav.debug_info.items[block.abbrev_code..][0..inlined_func_bytes],
                 try wip_nav.dwarf.refAbbrevCode(.empty_inlined_func),
             );
+        }
         std.mem.writeInt(u32, wip_nav.debug_info.items[block.high_pc..][0..4], @intCast(code_off - block.low_pc_off), wip_nav.dwarf.endian);
         try wip_nav.setInlineFunc(func);
         wip_nav.any_children = true;
@@ -1943,9 +1957,12 @@ pub const WipNav = struct {
 
     fn blockValue(wip_nav: *WipNav, src_loc: Zcu.LazySrcLoc, val: Value) UpdateError!void {
         const ty = val.typeOf(wip_nav.pt.zcu);
-        const diw = wip_nav.debug_info.writer(wip_nav.dwarf.gpa);
         const bytes = if (ty.hasRuntimeBits(wip_nav.pt.zcu)) ty.abiSize(wip_nav.pt.zcu) else 0;
-        try uleb128(diw, bytes);
+        {
+            var debug_info: std.io.Writer.Allocating = .fromArrayList(wip_nav.dwarf.gpa, &wip_nav.debug_info);
+            defer wip_nav.debug_info = debug_info.toArrayList();
+            try uleb128(&debug_info.writer, bytes);
+        }
         if (bytes == 0) return;
         const old_len = wip_nav.debug_info.items.len;
         try codegen.generateSymbol(
@@ -1975,7 +1992,6 @@ pub const WipNav = struct {
         big_int: std.math.big.int.Const,
     ) UpdateError!void {
         const zcu = wip_nav.pt.zcu;
-        const diw = wip_nav.debug_info.writer(wip_nav.dwarf.gpa);
         const signedness = switch (ty.toIntern()) {
             .comptime_int_type, .comptime_float_type => .signed,
             else => ty.intInfo(zcu).signedness,
@@ -2008,7 +2024,11 @@ pub const WipNav = struct {
         } else {
             try wip_nav.abbrevCode(abbrev_code.block);
             const bytes = @max(ty.abiSize(zcu), std.math.divCeil(usize, bits, 8) catch unreachable);
-            try uleb128(diw, bytes);
+            {
+                var debug_info: std.io.Writer.Allocating = .fromArrayList(wip_nav.dwarf.gpa, &wip_nav.debug_info);
+                defer wip_nav.debug_info = debug_info.toArrayList();
+                try uleb128(&debug_info.writer, bytes);
+            }
             big_int.writeTwosComplement(
                 try wip_nav.debug_info.addManyAsSlice(wip_nav.dwarf.gpa, @intCast(bytes)),
                 wip_nav.dwarf.endian,
@@ -2688,8 +2708,8 @@ pub fn finishWipNavFunc(
             try uleb128(diw, @intFromEnum(AbbrevCode.null));
         } else {
             const abbrev_code_buf = wip_nav.debug_info.items[0..AbbrevCode.decl_bytes];
-            var abbrev_code_fbs = std.io.fixedBufferStream(abbrev_code_buf);
-            const abbrev_code: AbbrevCode = @enumFromInt(std.leb.readUleb128(@typeInfo(AbbrevCode).@"enum".tag_type, abbrev_code_fbs.reader()) catch unreachable);
+            var abbrev_code_reader: std.io.Reader = .fixed(abbrev_code_buf);
+            const abbrev_code: AbbrevCode = @enumFromInt(std.leb.readUleb128(@typeInfo(AbbrevCode).@"enum".tag_type, &abbrev_code_reader) catch unreachable);
             std.leb.writeUnsignedFixed(
                 AbbrevCode.decl_bytes,
                 abbrev_code_buf,
@@ -6015,15 +6035,19 @@ fn sectionOffsetBytes(dwarf: *Dwarf) u32 {
 }
 
 fn uleb128Bytes(value: anytype) u32 {
-    var cw = std.io.countingWriter(std.io.null_writer);
-    try uleb128(cw.writer(), value);
-    return @intCast(cw.bytes_written);
+    var buf: [16]u8 = undefined;
+    var discarding: std.io.Writer.Discarding = .init(&buf);
+    uleb128(&discarding.writer, value) catch unreachable;
+    discarding.writer.flush() catch unreachable;
+    return @intCast(discarding.count);
 }
 
 fn sleb128Bytes(value: anytype) u32 {
-    var cw = std.io.countingWriter(std.io.null_writer);
-    try sleb128(cw.writer(), value);
-    return @intCast(cw.bytes_written);
+    var buf: [16]u8 = undefined;
+    var discarding: std.io.Writer.Discarding = .init(&buf);
+    sleb128(&discarding.writer, value) catch unreachable;
+    discarding.writer.flush() catch unreachable;
+    return @intCast(discarding.count);
 }
 
 /// overrides `-fno-incremental` for testing incremental debug info until `-fincremental` is functional

@@ -132,7 +132,8 @@ pub const Bind = struct {
     fn finalize(self: *Self, gpa: Allocator, ctx: *MachO) !void {
         if (self.entries.items.len == 0) return;
 
-        const writer = self.buffer.writer(gpa);
+        var buffer: std.io.Writer.Allocating = .fromArrayList(gpa, &self.buffer);
+        defer self.buffer = buffer.toArrayList();
 
         log.debug("bind opcodes", .{});
 
@@ -142,16 +143,16 @@ pub const Bind = struct {
         var seg_id: ?u8 = null;
         for (self.entries.items, 0..) |entry, i| {
             if (seg_id != null and seg_id.? == entry.segment_id) continue;
-            try finalizeSegment(self.entries.items[start..i], ctx, writer);
+            try finalizeSegment(self.entries.items[start..i], ctx, &buffer.writer);
             seg_id = entry.segment_id;
             start = i;
         }
 
-        try finalizeSegment(self.entries.items[start..], ctx, writer);
-        try done(writer);
+        try finalizeSegment(self.entries.items[start..], ctx, &buffer.writer);
+        try done(&buffer.writer);
     }
 
-    fn finalizeSegment(entries: []const Entry, ctx: *MachO, writer: anytype) !void {
+    fn finalizeSegment(entries: []const Entry, ctx: *MachO, writer: *std.io.Writer) !void {
         if (entries.len == 0) return;
 
         const seg_id = entries[0].segment_id;
@@ -263,7 +264,7 @@ pub const Bind = struct {
         }
     }
 
-    pub fn write(self: Self, writer: anytype) !void {
+    pub fn write(self: Self, writer: *std.io.Writer) !void {
         try writer.writeAll(self.buffer.items);
     }
 };
@@ -385,7 +386,8 @@ pub const WeakBind = struct {
     fn finalize(self: *Self, gpa: Allocator, ctx: *MachO) !void {
         if (self.entries.items.len == 0) return;
 
-        const writer = self.buffer.writer(gpa);
+        var buffer: std.io.Writer.Allocating = .fromArrayList(gpa, &self.buffer);
+        defer self.buffer = buffer.toArrayList();
 
         log.debug("weak bind opcodes", .{});
 
@@ -395,16 +397,16 @@ pub const WeakBind = struct {
         var seg_id: ?u8 = null;
         for (self.entries.items, 0..) |entry, i| {
             if (seg_id != null and seg_id.? == entry.segment_id) continue;
-            try finalizeSegment(self.entries.items[start..i], ctx, writer);
+            try finalizeSegment(self.entries.items[start..i], ctx, &buffer.writer);
             seg_id = entry.segment_id;
             start = i;
         }
 
-        try finalizeSegment(self.entries.items[start..], ctx, writer);
-        try done(writer);
+        try finalizeSegment(self.entries.items[start..], ctx, &buffer.writer);
+        try done(&buffer.writer);
     }
 
-    fn finalizeSegment(entries: []const Entry, ctx: *MachO, writer: anytype) !void {
+    fn finalizeSegment(entries: []const Entry, ctx: *MachO, writer: *std.io.Writer) !void {
         if (entries.len == 0) return;
 
         const seg_id = entries[0].segment_id;
@@ -555,7 +557,8 @@ pub const LazyBind = struct {
     fn finalize(self: *Self, gpa: Allocator, ctx: *MachO) !void {
         try self.offsets.ensureTotalCapacityPrecise(gpa, self.entries.items.len);
 
-        const writer = self.buffer.writer(gpa);
+        var buffer: std.io.Writer.Allocating = .fromArrayList(gpa, &self.buffer);
+        defer self.buffer = buffer.toArrayList();
 
         log.debug("lazy bind opcodes", .{});
 
@@ -578,32 +581,32 @@ pub const LazyBind = struct {
                 break :ord macho.BIND_SPECIAL_DYLIB_SELF;
             };
 
-            try setSegmentOffset(entry.segment_id, entry.offset, writer);
-            try setSymbol(name, flags, writer);
-            try setDylibOrdinal(ordinal, writer);
+            try setSegmentOffset(entry.segment_id, entry.offset, &buffer.writer);
+            try setSymbol(name, flags, &buffer.writer);
+            try setDylibOrdinal(ordinal, &buffer.writer);
 
             if (entry.addend != addend) {
-                try setAddend(entry.addend, writer);
+                try setAddend(entry.addend, &buffer.writer);
                 addend = entry.addend;
             }
 
-            try doBind(writer);
-            try done(writer);
+            try doBind(&buffer.writer);
+            try done(&buffer.writer);
         }
     }
 
-    pub fn write(self: Self, writer: anytype) !void {
+    pub fn write(self: Self, writer: *std.io.Writer) !void {
         try writer.writeAll(self.buffer.items);
     }
 };
 
-fn setSegmentOffset(segment_id: u8, offset: u64, writer: anytype) !void {
+fn setSegmentOffset(segment_id: u8, offset: u64, writer: *std.io.Writer) !void {
     log.debug(">>> set segment: {d} and offset: {x}", .{ segment_id, offset });
     try writer.writeByte(macho.BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | @as(u4, @truncate(segment_id)));
     try std.leb.writeUleb128(writer, offset);
 }
 
-fn setSymbol(name: []const u8, flags: u8, writer: anytype) !void {
+fn setSymbol(name: []const u8, flags: u8, writer: *std.io.Writer) !void {
     log.debug(">>> set symbol: {s} with flags: {x}", .{ name, flags });
     try writer.writeByte(macho.BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM | @as(u4, @truncate(flags)));
     try writer.writeAll(name);
@@ -645,12 +648,12 @@ fn setAddend(addend: i64, writer: anytype) !void {
     try std.leb.writeIleb128(writer, addend);
 }
 
-fn doBind(writer: anytype) !void {
+fn doBind(writer: *std.io.Writer) !void {
     log.debug(">>> bind", .{});
     try writer.writeByte(macho.BIND_OPCODE_DO_BIND);
 }
 
-fn doBindAddAddr(addr: u64, writer: anytype) !void {
+fn doBindAddAddr(addr: u64, writer: *std.io.Writer) !void {
     log.debug(">>> bind with add: {x}", .{addr});
     if (std.mem.isAlignedGeneric(u64, addr, @sizeOf(u64))) {
         const imm = @divExact(addr, @sizeOf(u64));
@@ -665,20 +668,20 @@ fn doBindAddAddr(addr: u64, writer: anytype) !void {
     try std.leb.writeUleb128(writer, addr);
 }
 
-fn doBindTimesSkip(count: usize, skip: u64, writer: anytype) !void {
+fn doBindTimesSkip(count: usize, skip: u64, writer: *std.io.Writer) !void {
     log.debug(">>> bind with count: {d} and skip: {x}", .{ count, skip });
     try writer.writeByte(macho.BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB);
     try std.leb.writeUleb128(writer, count);
     try std.leb.writeUleb128(writer, skip);
 }
 
-fn addAddr(addr: u64, writer: anytype) !void {
+fn addAddr(addr: u64, writer: *std.io.Writer) !void {
     log.debug(">>> add: {x}", .{addr});
     try writer.writeByte(macho.BIND_OPCODE_ADD_ADDR_ULEB);
     try std.leb.writeUleb128(writer, addr);
 }
 
-fn done(writer: anytype) !void {
+fn done(writer: *std.io.Writer) !void {
     log.debug(">>> done", .{});
     try writer.writeByte(macho.BIND_OPCODE_DONE);
 }

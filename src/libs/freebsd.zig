@@ -529,15 +529,14 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         try stubs_writer.writeAll(".text\n");
 
         var sym_i: usize = 0;
-        var sym_name_buf = std.ArrayList(u8).init(arena);
+        var sym_name_buf: std.io.Writer.Allocating = .init(arena);
         var opt_symbol_name: ?[]const u8 = null;
         var versions = try std.DynamicBitSetUnmanaged.initEmpty(arena, metadata.all_versions.len);
         var weak_linkages = try std.DynamicBitSetUnmanaged.initEmpty(arena, metadata.all_versions.len);
 
-        var inc_fbs = std.io.fixedBufferStream(metadata.inclusions);
-        var inc_reader = inc_fbs.reader();
+        var inc_reader: std.io.Reader = .fixed(metadata.inclusions);
 
-        const fn_inclusions_len = try inc_reader.readInt(u16, .little);
+        const fn_inclusions_len = try inc_reader.takeInt(u16, .little);
 
         // Pick the default symbol version:
         // - If there are no versions, don't emit it
@@ -550,15 +549,14 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         while (sym_i < fn_inclusions_len) : (sym_i += 1) {
             const sym_name = opt_symbol_name orelse n: {
                 sym_name_buf.clearRetainingCapacity();
-                try inc_reader.streamUntilDelimiter(sym_name_buf.writer(), 0, null);
-
-                opt_symbol_name = sym_name_buf.items;
+                try inc_reader.streamDelimiter(&sym_name_buf.writer, 0);
+                opt_symbol_name = sym_name_buf.getWritten();
                 versions.unsetAll();
                 weak_linkages.unsetAll();
                 chosen_def_ver_index = 255;
                 chosen_unversioned_ver_index = 255;
 
-                break :n sym_name_buf.items;
+                break :n sym_name_buf.getWritten();
             };
             {
                 const targets = try std.leb.readUleb128(u64, inc_reader);
@@ -696,15 +694,15 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         while (sym_i < obj_inclusions_len) : (sym_i += 1) {
             const sym_name = opt_symbol_name orelse n: {
                 sym_name_buf.clearRetainingCapacity();
-                try inc_reader.streamUntilDelimiter(sym_name_buf.writer(), 0, null);
+                try inc_reader.streamDelimiter(&sym_name_buf.writer, 0);
 
-                opt_symbol_name = sym_name_buf.items;
+                opt_symbol_name = sym_name_buf.getWritten();
                 versions.unsetAll();
                 weak_linkages.unsetAll();
                 chosen_def_ver_index = 255;
                 chosen_unversioned_ver_index = 255;
 
-                break :n sym_name_buf.items;
+                break :n sym_name_buf.getWritten();
             };
 
             {
@@ -832,15 +830,15 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         while (sym_i < tls_inclusions_len) : (sym_i += 1) {
             const sym_name = opt_symbol_name orelse n: {
                 sym_name_buf.clearRetainingCapacity();
-                try inc_reader.streamUntilDelimiter(sym_name_buf.writer(), 0, null);
+                try inc_reader.streamDelimiter(&sym_name_buf.writer, 0);
 
-                opt_symbol_name = sym_name_buf.items;
+                opt_symbol_name = sym_name_buf.getWritten();
                 versions.unsetAll();
                 weak_linkages.unsetAll();
                 chosen_def_ver_index = 255;
                 chosen_unversioned_ver_index = 255;
 
-                break :n sym_name_buf.items;
+                break :n sym_name_buf.getWritten();
             };
 
             {
